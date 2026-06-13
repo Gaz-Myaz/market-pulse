@@ -17,8 +17,16 @@ import streamlit as st
 
 logger = logging.getLogger("market-pulse")
 
-# pandas-ta imports must come after pandas; it monkey-patches the DataFrame.
-import pandas_ta as ta  # noqa: E402,F401
+# pandas-ta is optional. It registers the DataFrame ``.ta`` accessor when
+# present; when it is missing or its API has drifted, every indicator call
+# below falls back to the manual implementations in this module.
+try:
+    import pandas_ta as ta  # noqa: E402,F401
+
+    HAS_PANDAS_TA = True
+except Exception as _e:  # noqa: BLE001
+    HAS_PANDAS_TA = False
+    logger.warning(f"pandas-ta unavailable ({_e}); using manual indicators.")
 
 
 # The exact, ordered feature set used everywhere (training, prediction, display).
@@ -74,8 +82,21 @@ def _manual_bbp(close: pd.Series, length: int = 20, std: float = 2.0) -> pd.Seri
     return (close - lower) / (upper - lower).replace(0, np.nan)
 
 
+def _add_indicators_manual(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute every required indicator without pandas-ta."""
+    df["RSI_14"] = _manual_rsi(df["Close"])
+    df = df.join(_manual_macd(df["Close"]))
+    df["BBP_5_2.0"] = _manual_bbp(df["Close"])
+    df["SMA_20"] = df["Close"].rolling(20).mean()
+    df["SMA_50"] = df["Close"].rolling(50).mean()
+    return df
+
+
 def _add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Append RSI/MACD/Bollinger %B/SMA columns, with manual fallbacks."""
+    if not HAS_PANDAS_TA:
+        return _add_indicators_manual(df)
+
     # RSI
     try:
         df.ta.rsi(length=14, append=True)

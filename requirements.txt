@@ -1,6 +1,9 @@
 streamlit>=1.32.0
 yfinance>=0.2.36
-pandas-ta==0.3.14b0
+# pandas-ta is intentionally omitted: its only PyPI releases now (0.4.x) require
+# numpy>=2.2.6, which conflicts with the pinned pandas==2.1.4 (numpy<2). Technical
+# indicators (RSI, MACD, Bollinger %B, SMA) are computed manually in src/data.py.
+# If you install a numpy<2-compatible pandas-ta, src/data.py auto-detects and uses it.
 scikit-learn>=1.4.0
 xgboost>=2.0.0
 transformers>=4.38.0
