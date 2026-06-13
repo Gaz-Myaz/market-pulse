@@ -16,7 +16,11 @@ import streamlit as st
 
 logger = logging.getLogger("market-pulse")
 
-HF_API_URL = "https://api-inference.huggingface.co/models/ProsusAI/finbert"
+# HuggingFace retired the old `api-inference.huggingface.co` host in 2025. The
+# current serverless Inference endpoint is the router below. Anonymous access is
+# no longer free — a token (HF_TOKEN in secrets) is required for live sentiment;
+# without one the API returns 401 and the app falls back to neutral sentiment.
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/ProsusAI/finbert"
 
 
 def _hf_token() -> str:
@@ -59,14 +63,25 @@ def call_hf_api(headline: str, retries: int = 3) -> list:
                 json={"inputs": headline},
                 timeout=10,
             )
-            if response.status_code == 503:
-                # Model is loading (cold start) — back off and retry.
-                time.sleep(2 ** attempt)
-                continue
-            return response.json()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - network/DNS error, retry
             logger.warning(f"HF API call failed (attempt {attempt + 1}): {e}")
             time.sleep(2 ** attempt)
+            continue
+
+        if response.status_code == 200:
+            try:
+                return response.json()
+            except Exception:  # noqa: BLE001
+                return []
+        if response.status_code == 503:
+            # Model is loading (cold start) — back off and retry.
+            time.sleep(2 ** attempt)
+            continue
+        # 401/403/4xx/5xx won't be fixed by retrying (e.g. missing HF_TOKEN).
+        logger.warning(
+            f"HF API returned {response.status_code}; using neutral sentiment."
+        )
+        return []
     return []
 
 
@@ -77,6 +92,14 @@ def analyze_sentiment(headlines: list[str]) -> tuple[float, list[dict]]:
     """
     if not headlines:
         return 0.0, []
+
+    # The HF Inference API requires a token. With none set, every call 401s, so
+    # skip the network entirely and show the headlines with neutral scores.
+    token = _hf_token()
+    if not token:
+        return 0.0, [
+            {"title": h, "score": 0.0, "label": "neutral"} for h in headlines
+        ]
 
     results: list[dict] = []
     for headline in headlines:

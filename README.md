@@ -9,7 +9,7 @@ Stock market direction prediction platform — XGBoost + news sentiment, with se
 - **Sessions** — organize predictions per asset (SPY, GLD, BTC-USD, UUP seeded by default; add your own).
 - **Real predictions** — predict the next trading day's direction with XGBoost (main) and Logistic Regression (baseline).
 - **Backtesting** — quick single-date backtest or full walk-forward backtest across a date range, with a rolling accuracy chart.
-- **News sentiment** — Yahoo Finance RSS headlines scored by FinBERT via the HuggingFace Inference API.
+- **News sentiment** — Yahoo Finance RSS headlines scored by FinBERT via the HuggingFace Inference API (set `HF_TOKEN` in secrets; without it the app degrades gracefully to neutral sentiment).
 - **Verification** — real predictions are automatically checked at 24h / 1 week / 1 month and scored against the actual move.
 - **Track record** — per-session accuracy metrics, model metrics, confusion matrices, and a full prediction history table.
 
@@ -51,8 +51,8 @@ The app opens at http://localhost:8501.
 
 ```toml
 SUPABASE_URL = "https://xxxx.supabase.co"
-SUPABASE_KEY = "eyJ..."   # anon/public key — NOT the service_role key
-HF_TOKEN     = ""         # optional; free tier works without it (rate-limited)
+SUPABASE_KEY = "eyJ..."   # anon/public (publishable) key — NOT the service_role key
+HF_TOKEN     = "hf_..."   # HuggingFace token — required for live news sentiment
 ENABLE_AUTH  = false      # set true to enable per-user login
 ```
 
