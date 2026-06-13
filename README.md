@@ -59,8 +59,13 @@ ENABLE_AUTH  = false      # set true to enable per-user login
 ## Supabase Setup
 
 1. Create a project at [supabase.com](https://supabase.com) (free tier is fine).
-2. Open the **SQL Editor**, paste and run the schema below.
-3. Go to **Connect → Use a client library → Python** and copy the **Project URL** and **anon/public API key** into `.streamlit/secrets.toml`.
+2. Open the **SQL Editor**, paste and run the entire [`supabase_setup.sql`](supabase_setup.sql) script. It creates the tables, **grants table access to the API role** (required — without the grants the app gets `permission denied for table sessions`), and configures demo-mode access (RLS disabled). It is safe to re-run.
+3. Go to **Connect → Use a client library → Python** and copy the **Project URL** and **anon/public (publishable) API key** into `.streamlit/secrets.toml`.
+
+> To switch to per-user login later, set `ENABLE_AUTH = true` in secrets and run section **3b** (RLS + policies) of `supabase_setup.sql` instead of 3a.
+
+<details>
+<summary>Schema reference (also in <code>supabase_setup.sql</code>)</summary>
 
 ```sql
 -- Sessions table
@@ -115,6 +120,8 @@ ALTER TABLE predictions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'public';
 -- CREATE POLICY "users see own predictions"
 --   ON predictions FOR ALL USING (user_id = auth.uid()::text OR user_id = 'public');
 ```
+
+</details>
 
 > **Note:** Supabase free-tier projects pause after ~7 days of inactivity. The first request after a pause may fail while the database wakes up (≈30 seconds). The app detects this on startup and asks you to refresh — just reload the page.
 
