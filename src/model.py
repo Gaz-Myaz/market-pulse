@@ -7,7 +7,6 @@ shuffle. LR runs on standardized features; XGBoost runs on raw features.
 from __future__ import annotations
 
 import logging
-import time
 
 import numpy as np
 import pandas as pd
@@ -128,6 +127,28 @@ def train_on_full_data(df: pd.DataFrame) -> dict:
     }
 
 
+def train_for_prediction(df: pd.DataFrame) -> dict:
+    """Fit only the final models needed to predict (no eval split / metrics).
+
+    Roughly half the work of train_on_full_data — used inside backtests where
+    per-day metrics are not displayed.
+    """
+    data = df.dropna(subset=["target"]).copy()
+    X = data[FEATURE_COLS].fillna(0.0)
+    y = data["target"].astype(int)
+
+    scaler = StandardScaler().fit(X)
+    lr, xgb = get_models()
+    lr.fit(scaler.transform(X), y)
+    xgb.fit(X, y)
+    return {
+        "lr_model": lr,
+        "xgb_model": xgb,
+        "scaler": scaler,
+        "feature_importance": dict(zip(FEATURE_COLS, xgb.feature_importances_)),
+    }
+
+
 def predict_direction(models: dict, features: dict, sentiment_score: float) -> dict:
     """Predict next-day direction from current feature values."""
     feats = dict(features)
@@ -181,7 +202,7 @@ def backtest_single_date(
             "Need at least 1 year of data before the selected date."
         )
 
-    models = train_on_full_data(hist)
+    models = train_for_prediction(hist)
 
     last_row = hist.iloc[-1]
     features = {col: float(last_row[col]) for col in FEATURE_COLS}
@@ -210,17 +231,21 @@ def backtest_single_date(
         "lr_correct": correct_lr,
         "feature_importance": models["feature_importance"],
         "features": features,
-        "metrics": {"xgb": models["xgb_metrics"], "lr": models["lr_metrics"]},
     }
 
 
 def backtest_range(
-    ticker: str, start: str, end: str, sentiment_score: float = 0.0
+    ticker: str,
+    start: str,
+    end: str,
+    sentiment_score: float = 0.0,
+    progress_callback=None,
 ) -> pd.DataFrame:
     """Walk-forward backtest across [start, end]. One retrain per trading day.
 
-    To stay responsive (and avoid yfinance hammering), data is fetched once and
-    each step trains on the slice before that day.
+    Data is fetched once (not per day) and each step trains a lightweight model
+    on the slice before that day. `progress_callback(done, total)` is invoked
+    after each step so the UI can show a progress bar.
     """
     df = fetch_and_engineer(ticker)
     if df.empty:
@@ -228,36 +253,39 @@ def backtest_range(
 
     start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
     window = df[(df.index >= start_ts) & (df.index <= end_ts)]
+    total = len(window.index)
     rows = []
 
-    for current in window.index:
+    for i, current in enumerate(window.index, start=1):
         hist = df[df.index < current]
-        if len(hist) < MIN_TRAIN_ROWS:
-            continue
-        try:
-            models = train_on_full_data(hist)
-            last_row = hist.iloc[-1]
-            features = {col: float(last_row[col]) for col in FEATURE_COLS}
-            pred = predict_direction(models, features, sentiment_score)
+        if len(hist) >= MIN_TRAIN_ROWS:
+            try:
+                models = train_for_prediction(hist)
+                last_row = hist.iloc[-1]
+                features = {col: float(last_row[col]) for col in FEATURE_COLS}
+                pred = predict_direction(models, features, sentiment_score)
 
-            prev_close = float(last_row["Close"])
-            actual_close = float(df.loc[current, "Close"])
-            actual_direction = "UP" if actual_close > prev_close else "DOWN"
+                prev_close = float(last_row["Close"])
+                actual_close = float(df.loc[current, "Close"])
+                actual_direction = "UP" if actual_close > prev_close else "DOWN"
 
-            rows.append(
-                {
-                    "date": current.date(),
-                    "xgb_direction": pred["xgb_direction"],
-                    "lr_direction": pred["lr_direction"],
-                    "actual_direction": actual_direction,
-                    "xgb_correct": pred["xgb_direction"] == actual_direction,
-                    "lr_correct": pred["lr_direction"] == actual_direction,
-                }
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Backtest step failed on {current}: {e}")
-            continue
-        time.sleep(0.05)  # gentle pacing
+                rows.append(
+                    {
+                        "date": current.date(),
+                        "xgb_direction": pred["xgb_direction"],
+                        "lr_direction": pred["lr_direction"],
+                        "actual_direction": actual_direction,
+                        "xgb_correct": pred["xgb_direction"] == actual_direction,
+                        "lr_correct": pred["lr_direction"] == actual_direction,
+                    }
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Backtest step failed on {current}: {e}")
+        if progress_callback is not None:
+            try:
+                progress_callback(i, total)
+            except Exception:  # noqa: BLE001
+                pass
 
     return pd.DataFrame(
         rows,

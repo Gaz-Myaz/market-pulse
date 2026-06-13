@@ -12,6 +12,9 @@ Stock market direction prediction platform — XGBoost + news sentiment, with se
 - **News sentiment** — Yahoo Finance RSS headlines scored by FinBERT via the HuggingFace Inference API (set `HF_TOKEN` in secrets; without it the app degrades gracefully to neutral sentiment).
 - **Verification** — real predictions are automatically checked at 24h / 1 week / 1 month and scored against the actual move.
 - **Track record** — per-session accuracy metrics, model metrics, confusion matrices, and a full prediction history table.
+- **Bilingual UI** — switch between English and Russian from the top-right toggle.
+
+> **Backtesting note:** the full backtest retrains both models for every trading day in the range, so long ranges are slow and can exhaust free-tier hosting. Keep ranges short (≈1 week); the app warns past 7 days and blocks ranges over ~1 month.
 
 ## Tech Stack
 

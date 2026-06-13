@@ -163,6 +163,13 @@ def fetch_and_engineer(ticker: str, period: str = "5y") -> pd.DataFrame:
         raise ValueError("No data returned for ticker")
 
     df = _flatten_columns(raw.copy())
+
+    # Normalise to a tz-naive DatetimeIndex. yfinance sometimes returns a
+    # tz-aware index (notably for crypto), which raises TypeError when compared
+    # against the tz-naive timestamps used in the backtests.
+    if isinstance(df.index, pd.DatetimeIndex) and df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+
     df = _add_indicators(df)
 
     # Derived features

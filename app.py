@@ -7,7 +7,6 @@ between the home view (session list) and the session view (analysis + history).
 from __future__ import annotations
 
 import logging
-from datetime import timezone
 
 import pandas as pd
 import streamlit as st
@@ -35,6 +34,7 @@ from src.model import (
     get_trained_models,
     predict_direction,
 )
+from src.i18n import LANGUAGES, get_lang, t
 from src.sentiment import analyze_sentiment, fetch_headlines
 from src.storage import (
     check_db_connection,
@@ -47,6 +47,11 @@ from src.storage import (
     seed_default_sessions,
 )
 from src.verify import verify_pending_predictions
+
+# Full backtests retrain a model per trading day. Cap the range to protect
+# free-tier hosting; warn well before the cap.
+MAX_BACKTEST_DAYS = 31      # hard limit (calendar days)
+RECOMMENDED_BACKTEST_DAYS = 7  # soft "keep it short" threshold
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -92,6 +97,9 @@ st.markdown(
         border-radius: 6px; letter-spacing: 0.02em;
     }
     .mp-muted { color: #6B7280; font-size: 0.85rem; }
+    /* Language switcher: compact, right-aligned, themed. */
+    div[data-testid="stSegmentedControl"] { display: flex; justify-content: flex-end; }
+    div[data-testid="stSegmentedControl"] button { padding: 0.15rem 0.7rem; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -120,24 +128,24 @@ def fmt_date(ts: str) -> str:
 
 
 def calc_accuracy(predictions: list[dict], horizon: str):
-    """Return (accuracy_float | None, label_string) for verified real preds."""
+    """Return (accuracy_float | None, count_label) for verified real preds."""
     verified = [
         p for p in predictions
         if p.get("mode") == "real" and p.get(f"verified_{horizon}") is not None
     ]
     if not verified:
-        return None, "—"
+        return None, t("dir_none")
     correct = sum(1 for p in verified if p[f"verified_{horizon}"] is True)
     acc = correct / len(verified)
-    return acc, f"{acc:.0%} ({correct} of {len(verified)})"
+    return acc, t("acc_count_fmt", correct=correct, total=len(verified))
 
 
 def direction_arrow(direction: str | None) -> str:
     if direction == "UP":
-        return "↑ UP"
+        return t("dir_up")
     if direction == "DOWN":
-        return "↓ DOWN"
-    return "—"
+        return t("dir_down")
+    return t("dir_none")
 
 
 def validate_ticker(ticker: str) -> bool:
@@ -166,12 +174,12 @@ def render_home_page() -> None:
     with header_l:
         st.title("📈 Market Pulse")
         st.markdown(
-            '<p class="mp-muted">Stock direction prediction with XGBoost + news sentiment.</p>',
+            f'<p class="mp-muted">{t("app_tagline")}</p>',
             unsafe_allow_html=True,
         )
     with header_r:
         if ENABLE_AUTH and st.session_state.get("user"):
-            if st.button("Sign out"):
+            if st.button(t("sign_out")):
                 sign_out()
                 st.rerun()
 
@@ -179,41 +187,35 @@ def render_home_page() -> None:
         sessions = get_all_sessions()
     except Exception as e:  # noqa: BLE001
         logger.error(f"Failed to load sessions: {e}")
-        st.error(
-            "Database connection failed. Check Supabase credentials in secrets.toml."
-        )
+        st.error(t("db_error"))
         return
 
     # New-session form.
-    with st.expander("➕ New Session"):
+    with st.expander(t("new_session")):
         with st.form("new_session_form", clear_on_submit=True):
-            name = st.text_input("Name", placeholder="e.g. Apple")
-            ticker = st.text_input("Ticker", placeholder="e.g. AAPL")
-            description = st.text_area("Description (optional)")
-            submitted = st.form_submit_button("Create")
+            name = st.text_input(t("field_name"), placeholder="e.g. Apple")
+            ticker = st.text_input(t("field_ticker"), placeholder="e.g. AAPL")
+            description = st.text_area(t("field_description"))
+            submitted = st.form_submit_button(t("create"))
             if submitted:
                 ticker_clean = ticker.strip().upper()
                 if not name.strip() or not ticker_clean:
-                    st.warning("Name and ticker are required.")
+                    st.warning(t("name_ticker_required"))
                 elif not validate_ticker(ticker_clean):
-                    st.error(
-                        "Ticker not found on Yahoo Finance. Please check the symbol."
-                    )
+                    st.error(t("ticker_not_found"))
                 else:
                     try:
                         create_session(name.strip(), ticker_clean, description.strip())
-                        st.success(f"Created session for {ticker_clean}.")
+                        st.success(t("session_created", ticker=ticker_clean))
                         st.rerun()
                     except Exception as e:  # noqa: BLE001
                         logger.error(f"Create session failed: {e}")
-                        st.error("Could not create session. Please try again.")
+                        st.error(t("create_failed"))
 
-    st.subheader("Sessions")
+    st.subheader(t("sessions"))
 
     if not sessions:
-        st.info(
-            "No sessions yet. Use **➕ New Session** above to create your first one."
-        )
+        st.info(t("no_sessions"))
         return
 
     # Render session cards two per row.
@@ -236,7 +238,7 @@ def _render_session_card(sess: dict) -> None:
             )
         with top_r:
             if not sess.get("is_default"):
-                if st.button("🗑", key=f"del_{sid}", help="Delete session"):
+                if st.button("🗑", key=f"del_{sid}", help=t("delete_help")):
                     st.session_state[f"confirm_del_{sid}"] = True
 
         # Last prediction summary + accuracy badges.
@@ -249,11 +251,14 @@ def _render_session_card(sess: dict) -> None:
             last = preds[0]
             conf = last.get("xgb_confidence") or 0.0
             st.markdown(
-                f'{direction_arrow(last.get("xgb_direction"))} · '
-                f'{conf:.0%} confidence',
+                t(
+                    "conf_fmt",
+                    dir=direction_arrow(last.get("xgb_direction")),
+                    pct=f"{conf:.0%}",
+                )
             )
         else:
-            st.markdown('<span class="mp-muted">No predictions yet</span>',
+            st.markdown(f'<span class="mp-muted">{t("no_predictions_yet")}</span>',
                         unsafe_allow_html=True)
 
         a24, _ = calc_accuracy(preds, "24h")
@@ -268,20 +273,20 @@ def _render_session_card(sess: dict) -> None:
         )
         st.markdown(f'<span class="mp-muted">{badge}</span>', unsafe_allow_html=True)
         st.markdown(
-            f'<span class="mp-muted">Created {fmt_date(sess.get("created_at"))}</span>',
+            f'<span class="mp-muted">{t("created", date=fmt_date(sess.get("created_at")))}</span>',
             unsafe_allow_html=True,
         )
 
-        if st.button("Open →", key=f"open_{sid}"):
+        if st.button(t("open"), key=f"open_{sid}"):
             open_session(sid)
             st.rerun()
 
         # Inline delete confirmation.
         if st.session_state.get(f"confirm_del_{sid}"):
-            st.warning("Delete this session? This cannot be undone.")
+            st.warning(t("delete_confirm"))
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("Confirm delete", key=f"confirm_{sid}"):
+                if st.button(t("confirm_delete"), key=f"confirm_{sid}"):
                     try:
                         delete_session(sid)
                     except Exception as e:  # noqa: BLE001
@@ -289,7 +294,7 @@ def _render_session_card(sess: dict) -> None:
                     st.session_state.pop(f"confirm_del_{sid}", None)
                     st.rerun()
             with c2:
-                if st.button("Cancel", key=f"cancel_{sid}"):
+                if st.button(t("cancel"), key=f"cancel_{sid}"):
                     st.session_state.pop(f"confirm_del_{sid}", None)
                     st.rerun()
 
@@ -298,7 +303,7 @@ def _render_session_card(sess: dict) -> None:
 # Session page
 # --------------------------------------------------------------------------- #
 def render_session_page(session_id: str) -> None:
-    if st.button("← Back to Sessions"):
+    if st.button(t("back_to_sessions")):
         go_home()
         st.rerun()
 
@@ -306,12 +311,12 @@ def render_session_page(session_id: str) -> None:
         sess = get_session(session_id)
     except Exception as e:  # noqa: BLE001
         logger.error(f"Failed to load session: {e}")
-        st.error("Could not load this session.")
+        st.error(t("could_not_load_session"))
         return
 
     if not sess:
-        st.error("Session not found.")
-        if st.button("Back home"):
+        st.error(t("session_not_found"))
+        if st.button(t("back_home")):
             go_home()
             st.rerun()
         return
@@ -322,7 +327,7 @@ def render_session_page(session_id: str) -> None:
         unsafe_allow_html=True,
     )
     st.markdown(
-        f'<span class="mp-muted">Created {fmt_date(sess.get("created_at"))}</span>',
+        f'<span class="mp-muted">{t("created", date=fmt_date(sess.get("created_at")))}</span>',
         unsafe_allow_html=True,
     )
 
@@ -347,52 +352,58 @@ def _render_analysis_panel(sess: dict) -> None:
     ticker = sess["ticker"]
     session_id = sess["id"]
 
-    st.markdown("### Analysis")
+    st.markdown(f"### {t('analysis')}")
+    # Stable mode keys; labels are translated via format_func.
     mode = st.radio(
-        "Mode",
-        ["Real Prediction", "Quick Backtest", "Full Backtest"],
+        t("mode"),
+        ["real", "quick", "full"],
+        format_func=lambda k: t(f"mode_{k}"),
         key=f"mode_{session_id}",
     )
-    mode_help = {
-        "Real Prediction": "Predict the next trading day's direction and save it to history.",
-        "Quick Backtest": "Pick one past date and see how the model would have called it.",
-        "Full Backtest": "Replay a date range to measure overall accuracy.",
-    }
-    st.caption(mode_help[mode])
+    st.caption(t(f"mode_help_{mode}"))
 
     today = pd.Timestamp.now().date()
     quick_date = start_date = end_date = None
-    if mode == "Quick Backtest":
+    if mode == "quick":
         quick_date = st.date_input(
-            "Select date",
+            t("select_date"),
             value=today - pd.Timedelta(days=30),
             max_value=today - pd.Timedelta(days=1),
             key=f"qdate_{session_id}",
         )
-    elif mode == "Full Backtest":
+    elif mode == "full":
+        # Keep the default window short — a long range retrains a model per day.
+        st.warning(t("backtest_warning"))
         c1, c2 = st.columns(2)
         with c1:
             start_date = st.date_input(
-                "Start",
-                value=today - pd.Timedelta(days=90),
+                t("start"),
+                value=today - pd.Timedelta(days=8),
                 max_value=today - pd.Timedelta(days=2),
                 key=f"sdate_{session_id}",
             )
         with c2:
             end_date = st.date_input(
-                "End",
+                t("end"),
                 value=today - pd.Timedelta(days=1),
                 max_value=today - pd.Timedelta(days=1),
                 key=f"edate_{session_id}",
             )
+        # Live feedback on how heavy the chosen range is.
+        if start_date and end_date and end_date > start_date:
+            span = (end_date - start_date).days
+            if span > MAX_BACKTEST_DAYS:
+                st.error(t("range_too_long", days=span, max=MAX_BACKTEST_DAYS))
+            elif span > RECOMMENDED_BACKTEST_DAYS:
+                st.info(t("backtest_long_notice", days=span))
     else:
         next_day = get_next_trading_day()
         st.markdown(
-            f'<span class="mp-muted">Predicting for: <b>{next_day}</b></span>',
+            f'<span class="mp-muted">{t("predicting_for", date=next_day)}</span>',
             unsafe_allow_html=True,
         )
 
-    run_label = "Run Backtest" if mode == "Full Backtest" else "Run Analysis"
+    run_label = t("run_backtest") if mode == "full" else t("run_analysis")
     if st.button(run_label, key=f"run_{session_id}"):
         _run_analysis(sess, mode, quick_date, start_date, end_date)
 
@@ -406,7 +417,7 @@ def _render_analysis_panel(sess: dict) -> None:
             if result["mode"] == "quick":
                 _render_quick_outcome(result)
             if result.get("feature_importance"):
-                st.markdown("#### Feature Importance")
+                st.markdown(f"#### {t('feature_importance')}")
                 st.plotly_chart(
                     feature_importance_chart(result["feature_importance"]),
                     use_container_width=True,
@@ -415,50 +426,87 @@ def _render_analysis_panel(sess: dict) -> None:
                          result.get("sentiment_score", 0.0))
 
 
+def _safe_sentiment(ticker: str):
+    """Fetch headlines + sentiment, degrading to neutral on any failure."""
+    try:
+        headlines = fetch_headlines(ticker)
+        return analyze_sentiment(headlines)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Sentiment unavailable: {e}")
+        return 0.0, []
+
+
 def _run_analysis(sess, mode, quick_date, start_date, end_date) -> None:
     ticker = sess["ticker"]
     session_id = sess["id"]
 
-    with st.spinner("Fetching data & running models..."):
-        try:
-            headlines = fetch_headlines(ticker)
-            sentiment_score, headlines_detail = analyze_sentiment(headlines)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Sentiment unavailable: {e}")
-            sentiment_score, headlines_detail = 0.0, []
+    # Full backtest gets its own progress bar (it can run many retrains) instead
+    # of a generic spinner.
+    if mode == "full":
+        _run_full_backtest(sess, start_date, end_date)
+        return
 
+    with st.spinner(t("spinner_running")):
+        sentiment_score, headlines_detail = _safe_sentiment(ticker)
         try:
-            if mode == "Real Prediction":
+            if mode == "real":
                 _run_real(sess, sentiment_score, headlines_detail)
-            elif mode == "Quick Backtest":
+            else:  # quick backtest
                 if quick_date is None:
-                    st.warning("Please choose a date.")
+                    st.warning(t("choose_date"))
                     return
-                res = backtest_single_date(
-                    ticker, str(quick_date), sentiment_score
-                )
+                res = backtest_single_date(ticker, str(quick_date), sentiment_score)
                 st.session_state[f"result_{session_id}"] = {
                     "mode": "quick",
                     **res,
                     "sentiment_score": sentiment_score,
                     "headlines_detail": headlines_detail,
                 }
-            else:  # Full Backtest
-                if start_date is None or end_date is None or end_date <= start_date:
-                    st.warning("End date must be after start date.")
-                    return
-                results_df = backtest_range(
-                    ticker, str(start_date), str(end_date), sentiment_score
-                )
-                st.session_state[f"result_{session_id}"] = {
-                    "mode": "full",
-                    "results_df": results_df,
-                }
         except ValueError as e:
             st.warning(str(e))
         except Exception as e:  # noqa: BLE001
             logger.error(f"Analysis failed: {e}")
-            st.error("Ticker not found or data unavailable. Please check the symbol.")
+            st.error(t("ticker_unavailable"))
+
+
+def _run_full_backtest(sess, start_date, end_date) -> None:
+    ticker = sess["ticker"]
+    session_id = sess["id"]
+
+    if start_date is None or end_date is None or end_date <= start_date:
+        st.warning(t("end_after_start"))
+        return
+    span = (end_date - start_date).days
+    if span > MAX_BACKTEST_DAYS:
+        st.error(t("range_too_long", days=span, max=MAX_BACKTEST_DAYS))
+        return
+
+    sentiment_score, _ = _safe_sentiment(ticker)
+    progress = st.progress(0.0, text=t("backtest_progress", done=0, total=span))
+
+    def _cb(done: int, total: int) -> None:
+        frac = (done / total) if total else 1.0
+        progress.progress(
+            min(frac, 1.0), text=t("backtest_progress", done=done, total=total)
+        )
+
+    try:
+        results_df = backtest_range(
+            ticker, str(start_date), str(end_date), sentiment_score,
+            progress_callback=_cb,
+        )
+        progress.empty()
+        st.session_state[f"result_{session_id}"] = {
+            "mode": "full",
+            "results_df": results_df,
+        }
+    except ValueError as e:
+        progress.empty()
+        st.warning(str(e))
+    except Exception as e:  # noqa: BLE001
+        progress.empty()
+        logger.error(f"Backtest failed: {e}")
+        st.error(t("ticker_unavailable"))
 
 
 def _run_real(sess, sentiment_score, headlines_detail) -> None:
@@ -488,7 +536,7 @@ def _run_real(sess, sentiment_score, headlines_detail) -> None:
         save_prediction(session_id, prediction_data)
     except Exception as e:  # noqa: BLE001
         logger.error(f"Could not save prediction: {e}")
-        st.warning("Prediction made but could not be saved to the database.")
+        st.warning(t("prediction_saved_no_db"))
 
     st.session_state[f"result_{session_id}"] = {
         "mode": "real",
@@ -505,11 +553,11 @@ def _render_result_card(result: dict) -> None:
     xgb_dir = result["xgb_direction"]
     bullish = xgb_dir == "UP"
     arrow = "↑" if bullish else "↓"
-    word = "BULLISH" if bullish else "BEARISH"
+    word = t("bullish") if bullish else t("bearish")
     color = COLORS["up"] if bullish else COLORS["down"]
 
     with st.container(border=True):
-        st.markdown("**PREDICTION**")
+        st.markdown(f"**{t('prediction')}**")
         st.markdown(
             f'<div style="font-size:2rem;font-weight:700;color:{color}">'
             f'{arrow} {word}</div>',
@@ -517,70 +565,82 @@ def _render_result_card(result: dict) -> None:
         )
         xgb_c = result["xgb_confidence"]
         lr_c = result["lr_confidence"]
-        st.markdown(f'**XGBoost** — {result["xgb_direction"]} · {xgb_c:.0%}')
+        st.markdown(
+            f'**{t("xgboost")}** — {direction_arrow(result["xgb_direction"])} · {xgb_c:.0%}'
+        )
         st.progress(min(max(xgb_c, 0.0), 1.0))
-        st.markdown(f'**Log. Reg.** — {result["lr_direction"]} · {lr_c:.0%}')
+        st.markdown(
+            f'**{t("logreg")}** — {direction_arrow(result["lr_direction"])} · {lr_c:.0%}'
+        )
         st.progress(min(max(lr_c, 0.0), 1.0))
 
         agree = result["xgb_direction"] == result["lr_direction"]
         st.markdown(
-            f'Agreement: {"✓ Both agree" if agree else "✗ Models disagree"}'
+            f'{t("agreement")}: {t("both_agree") if agree else t("models_disagree")}'
         )
 
         feats = result.get("features", {})
         if feats:
-            st.markdown("**Key Indicators**")
+            st.markdown(f"**{t('key_indicators')}**")
             rsi = feats.get("RSI_14", 0.0)
             macd = feats.get("MACD_12_26_9", 0.0)
             bbp = feats.get("BBP_5_2.0", 0.0)
-            ma_cross = "Bullish" if feats.get("ma_cross", 0) >= 1 else "Bearish"
+            ma_cross = (
+                t("ma_cross_bullish") if feats.get("ma_cross", 0) >= 1
+                else t("ma_cross_bearish")
+            )
             vol = feats.get("volume_ratio", 0.0)
             st.markdown(
                 f"RSI: {rsi:.1f}  ·  MACD: {macd:+.2f}  ·  BB%: {bbp:.2f}  \n"
                 f"MA Cross: {ma_cross}  ·  Vol: {vol:.2f}×  \n"
-                f"Sentiment: {result.get('sentiment_score', 0.0):+.2f}"
+                f"{t('sentiment')}: {result.get('sentiment_score', 0.0):+.2f}"
             )
 
 
 def _render_quick_outcome(result: dict) -> None:
     actual = result.get("actual_direction")
     if actual is None:
-        st.info("Actual outcome not available yet for this date.")
+        st.info(t("outcome_unavailable"))
         return
     correct = result.get("xgb_correct")
     icon = "✅" if correct else "❌"
-    verdict = "Model was correct" if correct else "Model was wrong"
-    st.markdown(f"**Actual outcome (24h):** {icon} {actual} — {verdict}")
+    verdict = t("model_correct") if correct else t("model_wrong")
+    st.markdown(
+        f"**{t('actual_outcome_24h')}:** {icon} {direction_arrow(actual)} — {verdict}"
+    )
 
 
 def _render_full_backtest_result(result: dict) -> None:
     df = result["results_df"]
     if df is None or df.empty:
-        st.warning(
-            "No backtest results — the date range may be too short or too early "
-            "(need at least 1 year of data before the start date)."
-        )
+        st.warning(t("backtest_no_results"))
         return
 
     n = len(df)
     xgb_acc = df["xgb_correct"].mean()
     lr_acc = df["lr_correct"].mean()
     st.markdown(
-        f"**XGBoost: {xgb_acc:.1%}** over {n} predictions  |  "
-        f"Baseline LR: {lr_acc:.1%}"
+        t("backtest_summary", xgb=f"{xgb_acc:.1%}", n=n, lr=f"{lr_acc:.1%}")
     )
     st.plotly_chart(backtest_accuracy_chart(df), use_container_width=True)
 
     display = df.copy()
     display["date"] = display["date"].astype(str)
+    display["xgb_direction"] = display["xgb_direction"].map(
+        lambda d: direction_arrow(d)
+    )
+    display["lr_direction"] = display["lr_direction"].map(lambda d: direction_arrow(d))
+    display["actual_direction"] = display["actual_direction"].map(
+        lambda d: direction_arrow(d)
+    )
     display["xgb_correct"] = display["xgb_correct"].map({True: "✅", False: "❌"})
     display["lr_correct"] = display["lr_correct"].map({True: "✅", False: "❌"})
     display = display.rename(
         columns={
-            "date": "Date",
+            "date": t("col_date"),
             "xgb_direction": "XGB",
             "lr_direction": "LR",
-            "actual_direction": "Actual",
+            "actual_direction": t("col_actual"),
             "xgb_correct": "XGB ✓",
             "lr_correct": "LR ✓",
         }
@@ -589,10 +649,10 @@ def _render_full_backtest_result(result: dict) -> None:
 
 
 def _render_news(ticker: str, headlines_detail: list[dict], sentiment_score: float) -> None:
-    st.markdown(f"#### Latest News · {ticker}")
+    st.markdown(f"#### {t('latest_news', ticker=ticker)}")
     if not headlines_detail:
         st.markdown(
-            '<span class="mp-muted">No recent news found for this ticker.</span>',
+            f'<span class="mp-muted">{t("no_news")}</span>',
             unsafe_allow_html=True,
         )
         return
@@ -602,12 +662,14 @@ def _render_news(ticker: str, headlines_detail: list[dict], sentiment_score: flo
         st.markdown(f"{icon} {h['title']}  ·  **{score:+.2f}**")
 
     if sentiment_score > 0.1:
-        mood = "Slightly Positive" if sentiment_score < 0.4 else "Positive"
+        mood = t("mood_slightly_positive") if sentiment_score < 0.4 else t("mood_positive")
     elif sentiment_score < -0.1:
-        mood = "Slightly Negative" if sentiment_score > -0.4 else "Negative"
+        mood = t("mood_slightly_negative") if sentiment_score > -0.4 else t("mood_negative")
     else:
-        mood = "Neutral"
-    st.markdown(f"**Overall sentiment: {sentiment_score:+.2f} ({mood})**")
+        mood = t("mood_neutral")
+    st.markdown(
+        f"**{t('overall_sentiment', score=f'{sentiment_score:+.2f}', mood=mood)}**"
+    )
 
 
 def _render_history_and_charts(sess: dict) -> None:
@@ -620,19 +682,19 @@ def _render_history_and_charts(sess: dict) -> None:
         preds = []
 
     # Accuracy metrics (real, verified predictions only).
-    st.markdown("### Track Record")
+    st.markdown(f"### {t('track_record')}")
     m1, m2, m3 = st.columns(3)
     for col, horizon, title in [
-        (m1, "24h", "24h Accuracy"),
-        (m2, "1w", "1w Accuracy"),
-        (m3, "1m", "1m Accuracy"),
+        (m1, "24h", t("acc_24h")),
+        (m2, "1w", t("acc_1w")),
+        (m3, "1m", t("acc_1m")),
     ]:
         acc, label = calc_accuracy(preds, horizon)
         with col:
             st.metric(title, f"{acc:.0%}" if acc is not None else "—",
                       help=label)
             st.markdown(
-                f'<span class="mp-muted">{label if acc is not None else "no data"}</span>',
+                f'<span class="mp-muted">{label if acc is not None else t("no_data")}</span>',
                 unsafe_allow_html=True,
             )
 
@@ -641,12 +703,12 @@ def _render_history_and_charts(sess: dict) -> None:
     # shows clear "loading" feedback instead of a silent greyed-out delay.
     df = None
     models = None
-    with st.spinner("Loading market data & models..."):
+    with st.spinner(t("loading_market")):
         try:
             df = fetch_and_engineer(ticker)
         except Exception as e:  # noqa: BLE001
             logger.error(f"Could not load chart data for {ticker}: {e}")
-            st.error("Could not load market data for this ticker.")
+            st.error(t("could_not_load_market"))
         if df is not None and not df.empty:
             try:
                 models = get_trained_models(ticker, get_reference_date(ticker))
@@ -654,11 +716,11 @@ def _render_history_and_charts(sess: dict) -> None:
                 logger.warning(f"Model metrics unavailable: {e}")
 
     if df is not None and not df.empty:
-        st.markdown("#### Price")
+        st.markdown(f"#### {t('price')}")
         st.plotly_chart(price_chart(df, ticker), use_container_width=True)
-        st.markdown("#### RSI")
+        st.markdown(f"#### {t('rsi')}")
         st.plotly_chart(rsi_chart(df), use_container_width=True)
-        st.markdown("#### MACD")
+        st.markdown(f"#### {t('macd')}")
         st.plotly_chart(macd_chart(df), use_container_width=True)
 
         if models is not None:
@@ -666,21 +728,21 @@ def _render_history_and_charts(sess: dict) -> None:
 
     _render_history_table(preds)
 
-    if st.button("🔄 Verify Predictions", key=f"verify_{session_id}"):
-        with st.spinner("Checking outcomes..."):
+    if st.button(t("verify_predictions"), key=f"verify_{session_id}"):
+        with st.spinner(t("checking_outcomes")):
             try:
                 n = verify_pending_predictions()
-                st.success(f"Verified {n} prediction horizon(s).")
+                st.success(t("verified_n", n=n))
             except Exception as e:  # noqa: BLE001
                 logger.error(f"Manual verification failed: {e}")
-                st.error("Verification failed. Please try again later.")
+                st.error(t("verification_failed"))
         st.rerun()
 
 
 def _render_model_metrics(models: dict) -> None:
-    st.markdown("#### Model Metrics")
+    st.markdown(f"#### {t('model_metrics')}")
     if models.get("test_size", 0) < 30:
-        st.warning("Not enough data for reliable metrics (small test set).")
+        st.warning(t("not_enough_metrics"))
 
     xgb_m = models["xgb_metrics"]
     lr_m = models["lr_metrics"]
@@ -729,25 +791,25 @@ def _verify_icon(pred: dict, horizon: str) -> str:
 
 
 def _render_history_table(preds: list[dict]) -> None:
-    st.markdown("#### Prediction History")
+    st.markdown(f"#### {t('prediction_history')}")
     if not preds:
-        st.info("Run your first analysis to see history.")
+        st.info(t("run_first"))
         return
 
     rows = []
     for p in preds[:50]:
         agree = p.get("xgb_direction") == p.get("lr_direction")
-        mode_label = "Real" if p.get("mode") == "real" else "Backtest"
+        mode_label = t("real_short") if p.get("mode") == "real" else t("backtest_short")
         rows.append(
             {
-                "Date": fmt_date(p.get("created_at")),
-                "Mode": mode_label,
-                "Direction": direction_arrow(p.get("xgb_direction")),
+                t("col_date"): fmt_date(p.get("created_at")),
+                t("col_mode"): mode_label,
+                t("col_direction"): direction_arrow(p.get("xgb_direction")),
                 "XGB": f'{direction_arrow(p.get("xgb_direction"))} '
                        f'{(p.get("xgb_confidence") or 0):.0%}',
                 "LR": f'{direction_arrow(p.get("lr_direction"))} '
                       f'{(p.get("lr_confidence") or 0):.0%}',
-                "Agree": "✓" if agree else "✗",
+                t("col_agree"): "✓" if agree else "✗",
                 "24h": _verify_icon(p, "24h"),
                 "1w": _verify_icon(p, "1w"),
                 "1m": _verify_icon(p, "1m"),
@@ -757,21 +819,54 @@ def _render_history_table(preds: list[dict]) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Language selector
+# --------------------------------------------------------------------------- #
+def _render_language_selector() -> None:
+    """Compact EN/RU switcher, right-aligned under the header on every page."""
+    st.session_state.setdefault("lang", "en")
+    codes = list(LANGUAGES.keys())  # ["en", "ru"]
+    current = get_lang()
+    _, right = st.columns([0.78, 0.22])
+    with right:
+        if hasattr(st, "segmented_control"):
+            choice = st.segmented_control(
+                t("language"),
+                options=codes,
+                format_func=lambda c: LANGUAGES[c],
+                default=current,
+                key="lang_select",
+                label_visibility="collapsed",
+            )
+        else:  # fallback for older Streamlit
+            choice = st.radio(
+                t("language"),
+                options=codes,
+                index=codes.index(current),
+                format_func=lambda c: LANGUAGES[c],
+                horizontal=True,
+                key="lang_select",
+                label_visibility="collapsed",
+            )
+        # Keep the previous language if the control was deselected (None).
+        if choice and choice != st.session_state.get("lang"):
+            st.session_state["lang"] = choice
+            st.rerun()
+
+
+# --------------------------------------------------------------------------- #
 # Boot
 # --------------------------------------------------------------------------- #
 def main() -> None:
     require_auth()
 
+    _render_language_selector()
+
     # DB health check on first load.
     if not st.session_state.get("db_checked"):
-        with st.spinner("Starting Market Pulse..."):
+        with st.spinner(t("db_starting")):
             ok = check_db_connection()
         if not ok:
-            st.error(
-                "Database is waking up — this can take up to 30 seconds on the "
-                "first visit. Please refresh. If this persists, check your "
-                "Supabase credentials in secrets.toml."
-            )
+            st.error(t("db_error"))
             st.stop()
         try:
             seed_default_sessions()
