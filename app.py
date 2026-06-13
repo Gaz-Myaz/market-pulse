@@ -67,7 +67,10 @@ st.markdown(
     """
 <style>
     .stApp { background-color: #F9F7F4; }
-    .block-container { padding-top: 2rem; max-width: 1200px; }
+    /* Streamlit's top header is a 60px opaque bar. Make it blend with the page
+       and push content below it so nothing (e.g. the Back button) is hidden. */
+    [data-testid="stHeader"] { background: transparent; }
+    .block-container { padding-top: 4.5rem; max-width: 1200px; }
     h1, h2, h3 { font-weight: 600; color: #1A1A1A; }
     .stButton > button {
         background: #2563EB; color: white;
@@ -350,6 +353,12 @@ def _render_analysis_panel(sess: dict) -> None:
         ["Real Prediction", "Quick Backtest", "Full Backtest"],
         key=f"mode_{session_id}",
     )
+    mode_help = {
+        "Real Prediction": "Predict the next trading day's direction and save it to history.",
+        "Quick Backtest": "Pick one past date and see how the model would have called it.",
+        "Full Backtest": "Replay a date range to measure overall accuracy.",
+    }
+    st.caption(mode_help[mode])
 
     today = pd.Timestamp.now().date()
     quick_date = start_date = end_date = None
@@ -627,13 +636,22 @@ def _render_history_and_charts(sess: dict) -> None:
                 unsafe_allow_html=True,
             )
 
-    # Charts + model metrics need engineered data.
-    try:
-        df = fetch_and_engineer(ticker)
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"Could not load chart data for {ticker}: {e}")
-        st.error("Could not load market data for this ticker.")
-        df = None
+    # Charts + model metrics need engineered data and trained models — the
+    # heaviest part of the page. Load both under one spinner so the navigation
+    # shows clear "loading" feedback instead of a silent greyed-out delay.
+    df = None
+    models = None
+    with st.spinner("Loading market data & models..."):
+        try:
+            df = fetch_and_engineer(ticker)
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"Could not load chart data for {ticker}: {e}")
+            st.error("Could not load market data for this ticker.")
+        if df is not None and not df.empty:
+            try:
+                models = get_trained_models(ticker, get_reference_date(ticker))
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Model metrics unavailable: {e}")
 
     if df is not None and not df.empty:
         st.markdown("#### Price")
@@ -643,13 +661,8 @@ def _render_history_and_charts(sess: dict) -> None:
         st.markdown("#### MACD")
         st.plotly_chart(macd_chart(df), use_container_width=True)
 
-        # Model metrics from cached trained models.
-        try:
-            reference_date = get_reference_date(ticker)
-            models = get_trained_models(ticker, reference_date)
+        if models is not None:
             _render_model_metrics(models)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Model metrics unavailable: {e}")
 
     _render_history_table(preds)
 
