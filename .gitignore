@@ -5,3 +5,6 @@ __pycache__/
 .DS_Store
 venv/
 .venv/
+.claude/
+streamlit.log
+pip_install.log
