@@ -59,17 +59,27 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.predictions TO anon, authenticate
 
 -- --------------------------------------------------------------------------- --
 -- 3a. DEMO MODE (ENABLE_AUTH = false) — shared "public" data, no login.
---     Disabling RLS is the simplest setup for the demo.
+--     RLS stays ON (no Supabase security warning) with permissive policies so
+--     the anon role can read/write the shared rows.
 -- --------------------------------------------------------------------------- --
-ALTER TABLE public.sessions    DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.predictions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sessions    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.predictions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "public access sessions" ON public.sessions;
+CREATE POLICY "public access sessions"
+  ON public.sessions FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "public access predictions" ON public.predictions;
+CREATE POLICY "public access predictions"
+  ON public.predictions FOR ALL USING (true) WITH CHECK (true);
 
 -- --------------------------------------------------------------------------- --
 -- 3b. PRODUCTION MODE (ENABLE_AUTH = true) — per-user isolation.
---     Comment out section 3a above and uncomment this block instead.
+--     Switch to this by dropping the permissive policies from 3a and running
+--     these per-user policies instead.
 -- --------------------------------------------------------------------------- --
--- ALTER TABLE public.sessions    ENABLE ROW LEVEL SECURITY;
--- ALTER TABLE public.predictions ENABLE ROW LEVEL SECURITY;
+-- DROP POLICY IF EXISTS "public access sessions"    ON public.sessions;
+-- DROP POLICY IF EXISTS "public access predictions" ON public.predictions;
 --
 -- DROP POLICY IF EXISTS "users see own sessions" ON public.sessions;
 -- CREATE POLICY "users see own sessions"
