@@ -74,8 +74,11 @@ def create_session(
         "ticker": ticker.upper(),
         "description": description,
         "is_default": is_default,
-        "user_id": get_user_id() or "public",
     }
+    # Only set user_id when auth is on. When off, let the column default
+    # ('public') apply — this also works if the column doesn't exist yet.
+    if ENABLE_AUTH:
+        row["user_id"] = get_user_id()
     res = db.table("sessions").insert(row).execute()
     return res.data[0]
 
@@ -113,7 +116,8 @@ def save_prediction(session_id: str, prediction_data: dict) -> dict:
     db = get_client()
     row = dict(prediction_data)
     row["session_id"] = session_id
-    row["user_id"] = get_user_id() or "public"
+    if ENABLE_AUTH:
+        row["user_id"] = get_user_id()
     res = db.table("predictions").insert(row).execute()
     # Touch the session so it sorts to the top of the home list.
     try:

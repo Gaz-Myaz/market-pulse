@@ -46,6 +46,10 @@ CREATE TABLE IF NOT EXISTS predictions (
     user_id TEXT NOT NULL DEFAULT 'public'
 );
 
+-- Ensure user_id exists on pre-existing tables (no-op if already present).
+ALTER TABLE public.sessions    ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT 'public';
+ALTER TABLE public.predictions ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT 'public';
+
 -- --------------------------------------------------------------------------- --
 -- 2. Grant access to the API roles (fixes "permission denied for table", 42501)
 -- --------------------------------------------------------------------------- --
