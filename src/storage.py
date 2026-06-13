@@ -8,6 +8,7 @@ under the shared "public" user.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 import streamlit as st
 from supabase import create_client, Client
@@ -15,6 +16,11 @@ from supabase import create_client, Client
 from src.auth import ENABLE_AUTH, get_user_id
 
 logger = logging.getLogger("market-pulse")
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601 string PostgREST can cast to timestamptz."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 @st.cache_resource
@@ -111,7 +117,7 @@ def save_prediction(session_id: str, prediction_data: dict) -> dict:
     res = db.table("predictions").insert(row).execute()
     # Touch the session so it sorts to the top of the home list.
     try:
-        db.table("sessions").update({"updated_at": "now()"}).eq(
+        db.table("sessions").update({"updated_at": _utc_now_iso()}).eq(
             "id", session_id
         ).execute()
     except Exception as e:  # noqa: BLE001
@@ -139,7 +145,7 @@ def update_verification(
     patch = {
         f"verified_{horizon}": verified,
         f"actual_{horizon}": actual,
-        f"verified_{horizon}_at": "now()",
+        f"verified_{horizon}_at": _utc_now_iso(),
     }
     db.table("predictions").update(patch).eq("id", prediction_id).execute()
 
