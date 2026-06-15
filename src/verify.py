@@ -21,10 +21,15 @@ HORIZONS = {"24h": 1, "1w": 7, "1m": 30}
 
 
 def get_actual_direction(ticker: str, from_date: str, to_date: str) -> str | None:
-    """Compare close prices on/near two dates; return 'UP'/'DOWN' or None."""
+    """Compare close prices on/near two dates; return 'UP'/'DOWN' or None.
+
+    Pads the download window on both sides so that if `from_date` or `to_date`
+    falls on a weekend/holiday we still find the nearest trading-day close
+    (otherwise verification would silently never complete).
+    """
     try:
-        start = pd.Timestamp(from_date).date()
-        end = pd.Timestamp(to_date).date() + pd.Timedelta(days=5)
+        start = pd.Timestamp(from_date).date() - pd.Timedelta(days=7)
+        end = pd.Timestamp(to_date).date() + pd.Timedelta(days=7)
         data = yf.download(
             ticker, start=str(start), end=str(end), auto_adjust=True, progress=False
         )
