@@ -2,7 +2,7 @@
 
 Stock market direction prediction platform — XGBoost + news sentiment, with session management, backtesting, and prediction verification over time.
 
-![screenshot](screenshot.png)
+<!-- Add a screenshot of the running app and uncomment: ![screenshot](screenshot.png) -->
 
 ## Features
 
