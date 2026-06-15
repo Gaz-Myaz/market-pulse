@@ -238,3 +238,10 @@ def get_reference_date(ticker: str) -> str:
     if ticker in CRYPTO_TICKERS:
         return str(pd.Timestamp.now().date())
     return get_last_trading_day()
+
+
+def get_next_prediction_day(ticker: str) -> str:
+    """The day a real prediction is for. Crypto trades daily; stocks use NYSE."""
+    if ticker in CRYPTO_TICKERS:
+        return str((pd.Timestamp.now().normalize() + pd.Timedelta(days=1)).date())
+    return get_next_trading_day()

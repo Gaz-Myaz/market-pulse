@@ -25,7 +25,7 @@ from src.data import (
     FEATURE_COLS,
     fetch_and_engineer,
     get_latest_features,
-    get_next_trading_day,
+    get_next_prediction_day,
     get_reference_date,
 )
 from src.model import (
@@ -397,7 +397,7 @@ def _render_analysis_panel(sess: dict) -> None:
             elif span > RECOMMENDED_BACKTEST_DAYS:
                 st.info(t("backtest_long_notice", days=span))
     else:
-        next_day = get_next_trading_day()
+        next_day = get_next_prediction_day(ticker)
         st.markdown(
             f'<span class="mp-muted">{t("predicting_for", date=next_day)}</span>',
             unsafe_allow_html=True,
@@ -407,9 +407,10 @@ def _render_analysis_panel(sess: dict) -> None:
     if st.button(run_label, key=f"run_{session_id}"):
         _run_analysis(sess, mode, quick_date, start_date, end_date)
 
-    # Show last result stored in session_state.
+    # Show the last result only if it matches the currently selected mode —
+    # otherwise switching modes would leave a stale card from the old mode.
     result = st.session_state.get(f"result_{session_id}")
-    if result:
+    if result and result.get("mode") == mode:
         if result["mode"] == "full":
             _render_full_backtest_result(result)
         else:
@@ -521,6 +522,10 @@ def _run_real(sess, sentiment_score, headlines_detail) -> None:
     prediction_data = {
         "ticker": ticker,
         "mode": "real",
+        # Anchor date the prediction is made from (the last trading day whose
+        # close the model used). Verification compares prices relative to this,
+        # not to created_at, which can differ by a day for pre-market runs.
+        "backtest_date": reference_date,
         "xgb_direction": pred["xgb_direction"],
         "lr_direction": pred["lr_direction"],
         "xgb_confidence": pred["xgb_confidence"],

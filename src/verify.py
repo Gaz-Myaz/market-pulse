@@ -76,17 +76,21 @@ def verify_pending_predictions() -> int:
         # The predicted direction we compare against (XGBoost is the main model).
         predicted = pred.get("xgb_direction")
 
+        # Anchor the price comparison on the reference date the model used
+        # (backtest_date), falling back to the creation date for older rows.
+        anchor = pd.Timestamp(pred.get("backtest_date") or created_ts.date())
+
         for horizon, days in HORIZONS.items():
             if pred.get(f"verified_{horizon}") is not None:
                 continue
-            due = created_ts + pd.Timedelta(days=days)
-            if now < due:
-                continue  # not enough time has passed yet
+            # Timing gate: only verify once enough real time has elapsed.
+            if now < created_ts + pd.Timedelta(days=days):
+                continue
 
             actual = get_actual_direction(
                 ticker,
-                from_date=str(created_ts.date()),
-                to_date=str(due.date()),
+                from_date=str(anchor.date()),
+                to_date=str((anchor + pd.Timedelta(days=days)).date()),
             )
             if actual is None:
                 continue  # price data not available yet — try again later
