@@ -1,9 +1,11 @@
 streamlit>=1.32.0
 yfinance>=0.2.36
-# pandas-ta is intentionally omitted: its only PyPI releases now (0.4.x) require
-# numpy>=2.2.6, which conflicts with the pinned pandas==2.1.4 (numpy<2). Technical
-# indicators (RSI, MACD, Bollinger %B, SMA) are computed manually in src/data.py.
-# If you install a numpy<2-compatible pandas-ta, src/data.py auto-detects and uses it.
+# pandas is intentionally NOT pinned to an old version: Streamlit Cloud runs
+# Python 3.14, which has no prebuilt wheel for pandas 2.1.x and fails to build it
+# from source. We use a recent pandas (tested on 3.0) so a prebuilt wheel is used.
+# pandas-ta is omitted (its 0.4.x releases need numpy>=2.2.6 and a different API);
+# technical indicators are computed manually in src/data.py, and src/data.py
+# auto-detects pandas-ta if a compatible build is ever installed.
 scikit-learn>=1.4.0
 xgboost>=2.0.0
 # FinBERT runs via the HuggingFace Inference API (see src/sentiment.py), not a
@@ -12,8 +14,8 @@ xgboost>=2.0.0
 feedparser>=6.0.11
 supabase>=2.3.0
 plotly>=5.19.0
-pandas==2.1.4
-numpy>=1.26.0
+pandas>=2.2
+numpy>=1.26
 python-dateutil>=2.8.2
 pandas-market-calendars>=4.3.0
 requests>=2.31.0
