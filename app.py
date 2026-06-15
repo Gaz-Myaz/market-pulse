@@ -18,6 +18,8 @@ from src.charts import (
     confusion_matrix_chart,
     feature_importance_chart,
     macd_chart,
+    pnl_chart,
+    pnl_equity,
     price_chart,
     rsi_chart,
 )
@@ -52,6 +54,10 @@ from src.verify import verify_pending_predictions
 # free-tier hosting; warn well before the cap.
 MAX_BACKTEST_DAYS = 31      # hard limit (calendar days)
 RECOMMENDED_BACKTEST_DAYS = 7  # soft "keep it short" threshold
+
+# Below this confidence (or when the two models disagree) we surface the
+# prediction as "uncertain" rather than a firm bullish/bearish call.
+CONFIDENCE_THRESHOLD = 0.55
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -557,17 +563,30 @@ def _run_real(sess, sentiment_score, headlines_detail) -> None:
 def _render_result_card(result: dict) -> None:
     xgb_dir = result["xgb_direction"]
     bullish = xgb_dir == "UP"
-    arrow = "↑" if bullish else "↓"
-    word = t("bullish") if bullish else t("bearish")
-    color = COLORS["up"] if bullish else COLORS["down"]
+    # Flag low-conviction calls: models disagree, or top confidence is weak.
+    uncertain = (
+        result["xgb_direction"] != result["lr_direction"]
+        or result["xgb_confidence"] < CONFIDENCE_THRESHOLD
+    )
 
     with st.container(border=True):
         st.markdown(f"**{t('prediction')}**")
-        st.markdown(
-            f'<div style="font-size:2rem;font-weight:700;color:{color}">'
-            f'{arrow} {word}</div>',
-            unsafe_allow_html=True,
-        )
+        if uncertain:
+            st.markdown(
+                f'<div style="font-size:2rem;font-weight:700;color:{COLORS["neutral"]}">'
+                f'❓ {t("uncertain")}</div>'
+                f'<div class="mp-muted">{t("no_clear_signal")}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            arrow = "↑" if bullish else "↓"
+            word = t("bullish") if bullish else t("bearish")
+            color = COLORS["up"] if bullish else COLORS["down"]
+            st.markdown(
+                f'<div style="font-size:2rem;font-weight:700;color:{color}">'
+                f'{arrow} {word}</div>',
+                unsafe_allow_html=True,
+            )
         xgb_c = result["xgb_confidence"]
         lr_c = result["lr_confidence"]
         st.markdown(
@@ -629,7 +648,24 @@ def _render_full_backtest_result(result: dict) -> None:
     )
     st.plotly_chart(backtest_accuracy_chart(df), use_container_width=True)
 
-    display = df.copy()
+    # Simulated P&L — turn the directional signals into a hypothetical
+    # long/short strategy and compare its equity curve to buy & hold.
+    eq = pnl_equity(df)
+    if not eq.get("empty"):
+        st.markdown(f"#### {t('pnl_section')}")
+        st.markdown(
+            t("pnl_summary", strat=f"{eq['xgb_total']:+.1%}", bh=f"{eq['bh_total']:+.1%}")
+        )
+        st.plotly_chart(
+            pnl_chart(df, labels={
+                "xgb": t("strategy_xgb"), "lr": t("strategy_lr"),
+                "bh": t("buy_hold"), "axis": t("equity_axis"),
+            }),
+            use_container_width=True,
+        )
+        st.caption(t("pnl_note"))
+
+    display = df.drop(columns=["return"], errors="ignore").copy()
     display["date"] = display["date"].astype(str)
     display["xgb_direction"] = display["xgb_direction"].map(
         lambda d: direction_arrow(d)
@@ -821,6 +857,36 @@ def _render_history_table(preds: list[dict]) -> None:
             }
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    # Export the full (raw) history as CSV.
+    export_rows = [
+        {
+            "created_at": p.get("created_at"),
+            "ticker": p.get("ticker"),
+            "mode": p.get("mode"),
+            "reference_date": p.get("backtest_date"),
+            "xgb_direction": p.get("xgb_direction"),
+            "xgb_confidence": p.get("xgb_confidence"),
+            "lr_direction": p.get("lr_direction"),
+            "lr_confidence": p.get("lr_confidence"),
+            "sentiment_score": p.get("sentiment_score"),
+            "actual_24h": p.get("actual_24h"),
+            "verified_24h": p.get("verified_24h"),
+            "actual_1w": p.get("actual_1w"),
+            "verified_1w": p.get("verified_1w"),
+            "actual_1m": p.get("actual_1m"),
+            "verified_1m": p.get("verified_1m"),
+        }
+        for p in preds
+    ]
+    csv = pd.DataFrame(export_rows).to_csv(index=False).encode("utf-8")
+    st.download_button(
+        t("export_csv"),
+        data=csv,
+        file_name="market_pulse_predictions.csv",
+        mime="text/csv",
+        key="export_csv_btn",
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -268,6 +268,7 @@ def backtest_range(
                 prev_close = float(last_row["Close"])
                 actual_close = float(df.loc[current, "Close"])
                 actual_direction = "UP" if actual_close > prev_close else "DOWN"
+                actual_return = (actual_close / prev_close) - 1.0
 
                 rows.append(
                     {
@@ -277,6 +278,8 @@ def backtest_range(
                         "actual_direction": actual_direction,
                         "xgb_correct": pred["xgb_direction"] == actual_direction,
                         "lr_correct": pred["lr_direction"] == actual_direction,
+                        # Realised next-day return, for the simulated P&L curve.
+                        "return": actual_return,
                     }
                 )
             except Exception as e:  # noqa: BLE001
@@ -296,5 +299,6 @@ def backtest_range(
             "actual_direction",
             "xgb_correct",
             "lr_correct",
+            "return",
         ],
     )

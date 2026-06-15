@@ -161,6 +161,55 @@ def backtest_accuracy_chart(results_df: pd.DataFrame) -> go.Figure:
     return _base_layout(fig, 260)
 
 
+def pnl_equity(results_df: pd.DataFrame) -> dict:
+    """Compute equity curves (base 100) for XGB/LR long-short and buy & hold.
+
+    Returns a dict with the curves and final total returns. Empty-safe.
+    """
+    d = results_df.copy()
+    if d.empty or "return" not in d.columns:
+        return {"empty": True}
+    pos_map = {"UP": 1.0, "DOWN": -1.0}
+    xgb_pos = d["xgb_direction"].map(pos_map).fillna(0.0)
+    lr_pos = d["lr_direction"].map(pos_map).fillna(0.0)
+    r = d["return"].fillna(0.0)
+    bh = (1.0 + r).cumprod()
+    xgb_eq = (1.0 + xgb_pos * r).cumprod()
+    lr_eq = (1.0 + lr_pos * r).cumprod()
+    return {
+        "empty": False,
+        "date": d["date"],
+        "bh": bh * 100.0,
+        "xgb": xgb_eq * 100.0,
+        "lr": lr_eq * 100.0,
+        "xgb_total": float(xgb_eq.iloc[-1] - 1.0),
+        "lr_total": float(lr_eq.iloc[-1] - 1.0),
+        "bh_total": float(bh.iloc[-1] - 1.0),
+    }
+
+
+def pnl_chart(results_df: pd.DataFrame, labels: dict | None = None) -> go.Figure:
+    """Equity-curve chart: XGBoost / LR long-short strategies vs buy & hold."""
+    labels = labels or {}
+    eq = pnl_equity(results_df)
+    fig = go.Figure()
+    if not eq.get("empty"):
+        fig.add_trace(
+            go.Scatter(x=eq["date"], y=eq["xgb"], name=labels.get("xgb", "XGBoost strategy"),
+                       line=dict(color=COLORS["xgb"], width=2))
+        )
+        fig.add_trace(
+            go.Scatter(x=eq["date"], y=eq["lr"], name=labels.get("lr", "LR strategy"),
+                       line=dict(color=COLORS["lr"], width=1.5))
+        )
+        fig.add_trace(
+            go.Scatter(x=eq["date"], y=eq["bh"], name=labels.get("bh", "Buy & Hold"),
+                       line=dict(color=COLORS["text_muted"], width=1.5, dash="dash"))
+        )
+    fig.update_yaxes(title=labels.get("axis", "Growth of 100"))
+    return _base_layout(fig, 260)
+
+
 def confusion_matrix_chart(cm: np.ndarray, model_name: str) -> go.Figure:
     """2x2 confusion-matrix heatmap. Rows = actual, cols = predicted."""
     labels = ["DOWN", "UP"]

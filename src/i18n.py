@@ -110,6 +110,19 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "backtest_no_results": "No backtest results — the date range may be too short or too early (need at least 1 year of data before the start date).",
         "backtest_summary": "**XGBoost: {xgb}** over {n} predictions  |  Baseline LR: {lr}",
         "prediction_saved_no_db": "Prediction made but could not be saved to the database.",
+        # Simulated P&L
+        "pnl_section": "Simulated P&L",
+        "pnl_summary": "**Strategy (XGBoost): {strat}**  |  Buy & Hold: {bh}",
+        "strategy_xgb": "XGBoost strategy",
+        "strategy_lr": "LR strategy",
+        "buy_hold": "Buy & Hold",
+        "equity_axis": "Growth of 100",
+        "pnl_note": "Hypothetical long/short following the XGBoost signal. Not financial advice.",
+        # Uncertain signal
+        "uncertain": "UNCERTAIN",
+        "no_clear_signal": "No clear signal — models disagree or low confidence",
+        # CSV export
+        "export_csv": "⬇ Export CSV",
         # News
         "latest_news": "Latest News · {ticker}",
         "no_news": "No recent news found for this ticker.",
@@ -229,6 +242,19 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "backtest_no_results": "Нет результатов бэктеста — диапазон слишком мал или слишком ранний (нужен минимум 1 год данных до даты начала).",
         "backtest_summary": "**XGBoost: {xgb}** на {n} прогнозах  |  База LR: {lr}",
         "prediction_saved_no_db": "Прогноз сделан, но не сохранён в базе данных.",
+        # Simulated P&L
+        "pnl_section": "Симуляция доходности",
+        "pnl_summary": "**Стратегия (XGBoost): {strat}**  |  Купить и держать: {bh}",
+        "strategy_xgb": "Стратегия XGBoost",
+        "strategy_lr": "Стратегия LR",
+        "buy_hold": "Купить и держать",
+        "equity_axis": "Рост 100",
+        "pnl_note": "Гипотетическая стратегия long/short по сигналу XGBoost. Не является финансовым советом.",
+        # Uncertain signal
+        "uncertain": "НЕОПРЕДЕЛЁННО",
+        "no_clear_signal": "Чёткого сигнала нет — модели расходятся или низкая уверенность",
+        # CSV export
+        "export_csv": "⬇ Экспорт CSV",
         # News
         "latest_news": "Последние новости · {ticker}",
         "no_news": "Свежих новостей по этому тикеру не найдено.",

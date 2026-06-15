@@ -8,7 +8,9 @@ Stock market direction prediction platform — XGBoost + news sentiment, with se
 
 - **Sessions** — organize predictions per asset (SPY, GLD, BTC-USD, UUP seeded by default; add your own).
 - **Real predictions** — predict the next trading day's direction with XGBoost (main) and Logistic Regression (baseline).
-- **Backtesting** — quick single-date backtest or full walk-forward backtest across a date range, with a rolling accuracy chart.
+- **Backtesting** — quick single-date backtest or full walk-forward backtest across a date range, with a rolling accuracy chart and a **simulated P&L equity curve** (long/short strategy vs buy & hold).
+- **Honest signals** — low-conviction calls (models disagree or low confidence) surface as "Uncertain" instead of a forced direction.
+- **CSV export** — download a session's full prediction history.
 - **News sentiment** — Yahoo Finance RSS headlines scored by FinBERT via the HuggingFace Inference API (set `HF_TOKEN` in secrets; without it the app degrades gracefully to neutral sentiment).
 - **Verification** — real predictions are automatically checked at 24h / 1 week / 1 month and scored against the actual move.
 - **Track record** — per-session accuracy metrics, model metrics, confusion matrices, and a full prediction history table.
